@@ -32,6 +32,9 @@
 //###########################################################################
 
 #include "DSP28x_Project.h"     // Device Headerfile and Examples Include File
+#include "cmd_parser.h"
+#include <string.h>
+#include <ctype.h>
 
 //#define CPU_FREQ    90E6
 //#define LSPCLK_FREQ CPU_FREQ/4
@@ -57,6 +60,8 @@ void setFluke45(int loopCount, int setFunc);	// delay count, select Fluke45 AI c
 Uint16 stCount;	// string pointer
 const Uint16 LenOfstring = 32; // total length
 char stringrecv[LenOfstring];	// store RX string
+S_CommandParser scaiCmdParser;
+S_PM6000_FNC	scaiCmdData;
 
 
 void main(void)
@@ -141,6 +146,7 @@ void error(void)
     for (;;);
 }
 
+#if 0
 __interrupt void sciaRxFifoIsr(void)
 {
 //    Uint16 i;
@@ -162,6 +168,79 @@ __interrupt void sciaRxFifoIsr(void)
 
     PieCtrlRegs.PIEACK.all|=0x100;       // Issue PIE ack
 }
+#endif
+
+__interrupt void sciaRxFifoIsr(void)
+{
+	unsigned char input;
+
+	while (SciaRegs.SCIRXST.bit.RXRDY) {
+
+		//implement timeout checking here
+
+		//timeout reset
+		if (scaiCmdParser.time_timeout_flag) {
+			scaiCmdParser.reset = 0;
+			scaiCmdParser.start = 0;
+			scaiCmdParser.idx =0;
+			memset(scaiCmdParser.line, 0, sizeof(unsigned char) * COMMAND_LINE_LENGTH);
+			scaiCmdParser.time_timeout_flag = FALSE;
+		}
+
+
+		/* ----------------*/
+		//FIXME: mask upper but, convert uint16 to char
+		input = (char) SciaRegs.SCIRXBUF.all;
+		if (isascii(input)) {
+			scaiCmdParser.line[scaiCmdParser.idx] = input;
+		} else {
+			scaiCmdParser.reset = 0;
+			scaiCmdParser.start = 0;
+			scaiCmdParser.idx = 0;
+			continue;
+		}
+
+
+		if (scaiCmdParser.start == 1) {
+			/* FIXME Match <CR><LF>, end of command line */
+			if(scaiCmdParser.line[scaiCmdParser.idx]  == 0x0D) {// && (index > 0 ) && (cmd_line[index - 1] == 0x0A))
+				// converter char to float and put the value into data buffer.
+				//execute_commands();
+				scaiCmdParser.reset = 0;
+				scaiCmdParser.start = 0;
+				scaiCmdParser.idx = 0;
+				memset(scaiCmdParser.line, 0, sizeof(unsigned char) * COMMAND_LINE_LENGTH);
+				scaiCmdParser.time_timeout_flag = FALSE;
+				break;  //Exit while loop
+			}
+		} else if (isdigit(scaiCmdParser.line[scaiCmdParser.idx])) {
+			/* to confirm the char is digit */
+
+			/* make sure the cmd is started with the first char of the string */
+				if (scaiCmdParser.idx != 1) {
+					scaiCmdParser.line[0] = scaiCmdParser.line[scaiCmdParser.idx];
+					scaiCmdParser.idx = 0;
+				}
+
+		} else {
+				scaiCmdParser.reset = 1;
+		}
+		(scaiCmdParser.idx)++;
+
+		if ((scaiCmdParser.reset == 1) || (scaiCmdParser.idx >COMMAND_LINE_LENGTH )) {
+			scaiCmdParser.reset = 0;
+			scaiCmdParser.start = 0;
+			scaiCmdParser.idx = 0;
+			memset(scaiCmdParser.line, 0, sizeof(unsigned char) * COMMAND_LINE_LENGTH);
+		}
+	}
+
+		SciaRegs.SCIFFRX.bit.RXFFOVRCLR=1;   // Clear Overflow flag
+		SciaRegs.SCIFFRX.bit.RXFFINTCLR=1;   // Clear Interrupt flag
+
+		PieCtrlRegs.PIEACK.all|=0x100;       // Issue PIE ack
+}
+
 
 void scia_fifo_init()
 {
